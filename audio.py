@@ -1,14 +1,8 @@
-#DON'T USE __iter__ AND next, INSTEAD USE __getitem__ SO THAT YOU DON'T GET STUCK HALFWAY THROUGH ITERATING AND STUFF
-    #__getitem__ is automatically called when doing for in loops, FOR LOOPS ONLY KNOW WHEN TO STOP BY CHECKING IF __getitem__ RAISES StopIteration()
-    
 #MIGHT WANNA NOT READ ALL THE FRAMES RIGHT AWAY, INSTEAD ALWAYS CALL wave.readframes OR SOMETHING
-
-#~~~SHOULD REALLY FIGURE OUT WHAT EXACTLY 0 VOLUME IS (its probably 127 but I could have really screwed that up)
-    #I THINK SILENCE SHOULD ACTUALLY BE 128 HOLY MOLY (since the lowest amplitude should be -128 which should map to the null byte)
-#NEED TO FIGURE OUT IF w.readframes()[-1] IS DIFFERENT THAN open(file_loc).read()[44:][-1]
-    #MAKE SURE TO TEST 16 BIT 2 CHANNELS STUFF
+    #even a 5 minute wav file only takes like a second to read so it doesn't really matter
 
 #!!!SILENCE EXPORTED BY ABLETON HAS A BUNCH OF RANDOM JUNK IN IT FOR SOME REASON
+    #probably dithering
 
 import wave
 
@@ -41,7 +35,9 @@ class audio:
         
         self.sample_rate = self.wav.getframerate
         self.channels = self.wav.getnchannels
+        self._channels = self.wav.getnchannels()
         self.byte_depth = self.wav.getsampwidth  #gets bit depth in bytes
+        self._byte_depth = self.wav.getsampwidth()
         self._check_raw()  #make sure the wave file is formatted properly
 
     def __getitem__(self, index):
@@ -49,13 +45,13 @@ class audio:
             index = len(self) + index
         if index < len(self) and index >= 0:
             totals = []
-            for c in range(self.channels()):
+            for c in range(self._channels):
                 chan_total = 0
-                for b in range(self.byte_depth()):
+                for b in range(self._byte_depth):
                     chan_total <<= 8  #shift for next byte
                     byte = self._get_byte(index, c, b)  #access the proper byte
                     chan_total += ord(byte)  #add the value of the byte
-                chan_total -= 2**(self.byte_depth()*8-1)  #convert to signed (by subtracting 128 if 8 bit)
+                chan_total = self._convert_to_signed(chan_total)  #convert to signed int
                 totals.append(chan_total)
             return tuple(totals)
         else:
@@ -69,20 +65,16 @@ class audio:
             raise Exception("Wave file is not formatted correctly!")
 
     def _get_byte(self, sample_index, chan_num, byte_num):  #returns the specified byte of the specified channel of the specified sample
-        return self._raw[sample_index * self.channels() * self.byte_depth()  #the index of the 0th byte of the sample
-                         + chan_num * self.byte_depth()  #move to the 0th byte of the correct channel of the sample
-                         + byte_num]  #move to the correct byte in the channel
+        return self._raw[sample_index * self._channels * self._byte_depth  #the index of the 0th byte of the sample
+                         + chan_num * self._byte_depth   #move to the 0th byte of the correct channel of the sample
+                         + (self._byte_depth - 1)  #move to the last byte of the correct channel of the sample
+                         - byte_num]  #move back to the correct byte in the channel, BYTES ARE STORED IN LITTLE ENDIAN ORDER FOR SOME UNGODLY REASON
 
-
-
-
-if __name__ == "__main__":
-    le = audio('noidbeamDataTrue.wav')
-    with open('noidbeamDataTrue.wav', 'rb') as f:
-        ze = f.read()[44:]
-
-    print len(ze)
-    print len(le)
-
-    x = le[10001]
-    y = ze[10001*4:10001*4+4]
+    def _convert_to_signed(self, n):  #converts n to a signed number
+        if self.byte_depth() == 1:  #if 8 bit then the null byte is just -128 and \xff is 127
+            n -= 2**(self._byte_depth*8-1)  #subtract 128 if 8 bit
+        else:  #IF IT ISN'T 8 BIT THEN THE AUDIO DATA IS STORED IN 2'S COMPLEMENT ENCODING
+            shift_dist = (self._byte_depth*8) - 1
+            sign = n >> shift_dist
+            n -= (sign << shift_dist) * 2  #I could have done n -= n >> shift_dist << (shift_dist + 1)  but this is way more readable
+        return n
